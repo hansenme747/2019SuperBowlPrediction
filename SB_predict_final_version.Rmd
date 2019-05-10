@@ -1,0 +1,330 @@
+---
+title: "Super Bowl Prediction Analysis"
+author: "Mason Hansen"
+date: "2/2/2019"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, error = FALSE, include = FALSE, message = FALSE)
+```
+#Final Score Prediction and Outcome
+
+Patriots Predicted Score  |  Rams Predicted Score 
+------------------------- | -----------------------
+`r round(overall_scenarios[13,2], digits = 2)` | Rams: `r round(overall_scenarios[13,1], digits = 2)`
+
+
+```{r data prep}
+getwd()
+setwd("/Users/mason/Desktop/MSBA/Winter19/290_Forecast/SB19/")
+library(GGally)
+library(caret)
+library(psych)
+library(dplyr)
+library(ggiraphExtra)
+library(gtools)
+library(kableExtra)
+library(knitr)
+library(papeR)
+nfl_data<- openxlsx::read.xlsx("SB_data_current.xlsx") #Data is already cleaned and rid of NA
+nfl_data$Game.Location <- ifelse(nfl_data$Game.Location == "HOME", 1,0)
+# nfl_data$team_game_performance_metric<- nfl_data$team_game_performance_metric*100
+# nfl_data$opp_game_performance_metric<- nfl_data$opp_game_performance_metric*100
+# attach(nfl_data)
+# # Team Metrics
+# nfl_data$Score_Percentile<- Score_Percentile*100
+# nfl_data$Pass_percentile<- Pass_percentile*100
+# nfl_data$rush_percentile<- rush_percentile*100
+# nfl_data$TotalYards_Percentile<- TotalYards_Percentile*100
+# nfl_data$TO_percentile<- TO_percentile*100
+# #Opponent Metrics
+# nfl_data$OppPass_Percentile<- OppPass_Percentile*100
+# nfl_data$OppScore_Percentile<- OppScore_Percentile*100
+# nfl_data$OppRush_Percentile<- OppRush_Percentile*100
+# nfl_data$OppTotYd_Percentile<- OppTotYd_Percentile*100
+# nfl_data$OppTO_Percentile<- OppTO_Percentile*100
+#detach(nfl_data)
+rams_pats<- filter(nfl_data, nfl_data$Team == "Los Angeles Rams" | nfl_data$Team == "New England Patriots")
+arrange(rams_pats, Team, Game.Number)
+rams<- filter(nfl_data, nfl_data$Team == "Los Angeles Rams")
+arrange(rams, Game.Number)
+pats<- filter(nfl_data, nfl_data$Team == "New England Patriots")
+arrange(pats, Game.Number)
+#Training and Testing Sets
+partition_index<- createDataPartition(nfl_data$Outcome,times = 1, p = .70,list = FALSE)
+nfl_train<- nfl_data[partition_index,]
+nfl_test<- nfl_data[-partition_index,]
+#Rams Train and Test 
+partition_index3<- createDataPartition(rams$Outcome,times = 1, p = .70,list = FALSE)
+r_train<- rams[partition_index3,]
+r_test<- rams[-partition_index3,]
+
+
+#Pats Train and Test
+partition_index4<- createDataPartition(rams$Outcome,times = 1, p = .70,list = FALSE)
+p_train<- pats[partition_index4,]
+p_test<- pats[-partition_index4,]
+
+```
+
+# Data Investigation
+***
+
+```{r descriptive, include=TRUE, echo=FALSE, results='asis'}
+#Describe Whole Dataset
+#head(str(nfl_data))
+ds<- describeBy(select_if(nfl_data, is.numeric), group = nfl_data$Game.Location)
+kable(ds$`1`[c(4:16, 20:33),c(2:4,8:10)], digits = 2)%>%
+  kable_styling(bootstrap_options = c("striped","condensed"), full_width = F, position = "float_right")%>%
+  group_rows("Group 1: Standard NFL Game Stats",1,13)%>%
+  group_rows("Group 2: Engineered Performance Metrics",14,24)
+
+ds_week<-describeBy(select_if(nfl_data, is.numeric),group = nfl_data$Game.Number)
+#summary(nfl_data)
+#Scatter Plots and Correlation for whole dataset
+#ggpairs(select_if(nfl_data, is.numeric))
+```
+First step is to check the data for irregularities and possible outliers. A table of descriptive statistics is included. Only variable used later in the linear regression are included. Table of variables are split into two categories: Standard NFL game statistics, which include measurable statistics like Passing Yards, Rushing Yards, turnovers, etc...
+
+
+The next group of variables is comprised of engineered variables calculated from the Standard NFL game statistics. The two groups of variables will be very similar, but the engineered variables have been tweaked slightly to improve accuracy. The engineered variables, also know as the performance metrics, are essentially a rank order percentile of all 32 teams performance. The main distinction in this new metric is that each category (e.g. Passing Yards) has been ranked against other teams' Passing Yard performance, but only for the same game number. Essentially, the calculation of performance is isolated game by game and improves the accuracy of performance per game for each of the 32 teams in the data set
+
+***
+
+
+![](Dashboard_SB.png)
+
+Figure 1 (top) shows a clustering of Team Score vs. Team Game Performance Metric. Color indicates the separation of games by clustering methods (3).  Larger dots indicate a team was considered to pull off an upset. A majority of upset victories occur when the team has both better than average Team Score and better than average Team Performance Metric. 
+
+***
+
+## Regression Analysis
+```{r net score}
+#2 ####DO I NEED THIS?????
+model_basicstats<-
+  lm(data = nfl_train[,3:ncol(nfl_train)],Net_Score~
+       Team_Passing+Team_Rushing+Team_Turnovers+
+       Opponent_Passing + Opponent_Rushing+ Opponent_Turnovers)
+summary(model_basicstats)
+plot(model_basicstats)
+predict_lm2<- predict(model_basicstats, nfl_test)
+summary(predict_lm2)
+#4 
+mod_p<-
+  lm(data = nfl_train[,3:ncol(nfl_train)], Net_Score~
+      Pass_percentile + rush_percentile + TO_percentile+
+       OppPass_Percentile+ OppRush_Percentile + OppTO_Percentile)
+summary(mod_p)
+plot(mod_p)
+predict_lm4<- predict(mod_p, nfl_test)
+summary(predict_lm4)
+#plot(nfl_test$Net_Score,predict_lm4)
+```
+
+### Linear Regression: Team Score
+First Linear Model:
+This linear regression model was constructed using standard NFL game stats (Team / Opponent Passing Yards, Team / Opponent Rushing Yards and Team / Opponent Turnovers). 
+```{r team score, include=TRUE, echo = FALSE}
+# Team Score Model
+model_teamscore1<-
+  lm(data = nfl_train[,3:ncol(nfl_train)],Team_Score~
+       Team_Passing+Team_Rushing+Team_Turnovers+
+       Opponent_Passing + Opponent_Rushing+ Opponent_Turnovers)
+ms1<- summary(model_teamscore1)
+ms1
+par(mfrow = c(2,2))
+plot(model_teamscore1)
+predict_teamscore1<- predict(model_teamscore1, nfl_test)
+summary(predict_teamscore1)
+xx<-RMSE(predict_teamscore1, nfl_test$Team_Score)
+
+```
+
+Our first linear model is significant at a 95% confidence level with p-value < 0.05. The model performs moderately well, with an R-sq value of `r round(ms1$r.squared, digits = 2)`. Model applied to both training and testing set. A summary of the predicted values from the testing set are as follows: `r summary(predict_teamscore1)`
+
+***
+
+Second Linear Regression Model:
+This linear regression model was constructed using engineered performance metrics (Team / Opponent Passing Performance, Team / Opponent Rushing Performance, Team / Opponent Turnover Performance)
+```{r team score 2, include = TRUE, echo = FALSE}
+
+model_teamscore2<-
+  lm(data = nfl_train[,3:ncol(nfl_train)], Team_Score~
+      Pass_percentile + rush_percentile + TO_percentile+
+       OppPass_Percentile+ OppRush_Percentile + OppTO_Percentile)
+ms2<-summary(model_teamscore2)
+ms2
+par(mfrow = c(2,2))
+plot(model_teamscore2)
+
+predict_teamscore2<- predict(model_teamscore2, nfl_test)
+summary(predict_teamscore2)
+
+yy<-RMSE(predict_teamscore2, nfl_test$Team_Score)
+```
+
+Our second linear model is also significant at a 95% confidence level with p-value < 0.05. The second model performs slightly worse with an R-sq value of `r round(ms2$r.squared, digits = 2)`. This model was also applied to both the training and testing set. A summary of the predicted values from the testing set are as follows: `r summary(predict_teamscore2)`
+
+***
+
+## "What-if" Scenarios
+```{r rams scenarios 1, include=TRUE, echo = FALSE}
+#Ram scenarios
+scenarios<- data.frame("Rams Scenarios"=numeric(), "Patriots Scenarios" = numeric())
+#Rams Scenarios
+#1 Good offensive day,  good defensive day
+attach(rams)
+s1 = data.frame(Team_Passing = quantile(rams$Team_Passing, c(.75)), Team_Rushing= quantile(rams$Team_Rushing, c(.75)), Opponent_Passing=quantile(rams$Opponent_Passing, c(.25)), Opponent_Rushing=quantile(rams$Opponent_Rushing, c(.25)), Team_Turnovers = quantile(rams$Team_Turnovers, c(.25)), Opponent_Turnovers = quantile(rams$Opponent_Turnovers, c(.75)))
+s1_predict<-predict(model_teamscore1, s1)
+scenarios[1,1]<- s1_predict
+#2 Good, bad
+s2= data.frame(Team_Passing = quantile(rams$Team_Passing, c(.75)), Team_Rushing= quantile(rams$Team_Rushing, c(.75)), Opponent_Passing=quantile(rams$Opponent_Passing, c(.75)), Opponent_Rushing=quantile(rams$Opponent_Rushing, c(.75)), Team_Turnovers = quantile(rams$Team_Turnovers, c(.25)), Opponent_Turnovers = quantile(rams$Opponent_Turnovers, c(.25)))
+s2_predict<-predict(model_teamscore1, s2)
+scenarios[2,1]<-s2_predict
+#3 Bad, good
+s3 = data.frame(Team_Passing = quantile(rams$Team_Passing, c(.25)), Team_Rushing= quantile(rams$Team_Rushing, c(.25)), Opponent_Passing=quantile(rams$Opponent_Passing, c(.25)), Opponent_Rushing=quantile(rams$Opponent_Rushing, c(.25)), Team_Turnovers = quantile(rams$Team_Turnovers, c(.75)), Opponent_Turnovers = quantile(rams$Opponent_Turnovers, c(.75)))
+s3_predict<-predict(model_teamscore1, s3)
+scenarios[3,1]<-s3_predict
+#4 Bad, Bad
+s4 = data.frame(Team_Passing = quantile(rams$Team_Passing, c(.25)), Team_Rushing= quantile(rams$Team_Rushing, c(.25)), Opponent_Passing=quantile(rams$Opponent_Passing, c(.75)), Opponent_Rushing=quantile(rams$Opponent_Rushing, c(.75)), Team_Turnovers = quantile(rams$Team_Turnovers, c(.75)), Opponent_Turnovers = quantile(rams$Opponent_Turnovers, c(.25)))
+s4_predict<-predict(model_teamscore1, s4)
+scenarios[4,1]<-s4_predict
+detach(rams)
+```
+
+
+```{r pats scenarios 1, include=TRUE, echo = FALSE}
+### Patriots Scenarios
+#1 Good offensive day,  good defensive day
+attach(pats)
+p1 = data.frame(Team_Passing = quantile(pats$Team_Passing, c(.75)), Team_Rushing= quantile(pats$Team_Rushing, c(.75)), Opponent_Passing=quantile(pats$Opponent_Passing, c(.25)), Opponent_Rushing=quantile(pats$Opponent_Rushing, c(.25)), Team_Turnovers = quantile(pats$Team_Turnovers, c(.25)), Opponent_Turnovers = quantile(pats$Opponent_Turnovers, c(.75)))
+p1_predict<-predict(model_teamscore1, p1)
+scenarios[1,2]<- p1_predict
+#2 Good, bad
+p2= data.frame(Team_Passing = quantile(pats$Team_Passing, c(.75)), Team_Rushing= quantile(pats$Team_Rushing, c(.75)), Opponent_Passing=quantile(pats$Opponent_Passing, c(.75)), Opponent_Rushing=quantile(pats$Opponent_Rushing, c(.75)), Team_Turnovers = quantile(pats$Team_Turnovers, c(.25)), Opponent_Turnovers = quantile(pats$Opponent_Turnovers, c(.25)))
+p2_predict<-predict(model_teamscore1, p2)
+scenarios[2,2]<-p2_predict
+#3 Bad, good
+p3 = data.frame(Team_Passing = quantile(pats$Team_Passing, c(.25)), Team_Rushing= quantile(pats$Team_Rushing, c(.25)), Opponent_Passing=quantile(pats$Opponent_Passing, c(.25)), Opponent_Rushing=quantile(pats$Opponent_Rushing, c(.25)), Team_Turnovers = quantile(pats$Team_Turnovers, c(.75)), Opponent_Turnovers = quantile(pats$Opponent_Turnovers, c(.75)))
+p3_predict<-predict(model_teamscore1, p3)
+scenarios[3,2]<-p3_predict
+#4 Bad, Bad
+p4 = data.frame(Team_Passing = quantile(pats$Team_Passing, c(.25)), Team_Rushing= quantile(pats$Team_Rushing, c(.25)), Opponent_Passing=quantile(pats$Opponent_Passing, c(.75)), Opponent_Rushing=quantile(pats$Opponent_Rushing, c(.75)), Team_Turnovers = quantile(pats$Team_Turnovers, c(.75)), Opponent_Turnovers = quantile(pats$Opponent_Turnovers, c(.25)))
+p4_predict<-predict(model_teamscore1, p4)
+scenarios[4,2]<-p4_predict
+detach(pats)
+```
+
+
+
+```{r RS2, include=TRUE, echo = FALSE}
+### Percentile Model Scenarios
+percentile_scenarios<- data.frame("Rams Scenarios"=numeric(), "Patriots Scenarios" = numeric())
+#Rams Scenarios
+#1 Good offensive day,  good defensive day
+attach(rams)
+s1_1 = data.frame(Pass_percentile = quantile(rams$Pass_percentile, c(.75)), rush_percentile= quantile(rams$rush_percentile, c(.75)), OppPass_Percentile=quantile(rams$OppPass_Percentile, c(.25)), OppRush_Percentile=quantile(rams$OppRush_Percentile, c(.25)), TO_percentile = quantile(rams$TO_percentile, c(.25)), OppTO_Percentile = quantile(rams$OppTO_Percentile, c(.75)))
+s1_1_predict<-predict(model_teamscore2, s1_1)
+percentile_scenarios[1,1]<- s1_1_predict
+#2 Good, bad
+s2_1= data.frame(Pass_percentile = quantile(rams$Pass_percentile, c(.75)), rush_percentile= quantile(rams$rush_percentile, c(.75)), OppPass_Percentile=quantile(rams$OppPass_Percentile, c(.75)), OppRush_Percentile=quantile(rams$OppRush_Percentile, c(.75)), TO_percentile = quantile(rams$TO_percentile, c(.25)), OppTO_Percentile = quantile(rams$OppTO_Percentile, c(.25)))
+s2_1_predict<-predict(model_teamscore2, s2_1)
+percentile_scenarios[2,1]<-s2_1_predict
+#3 Bad, good
+s3_1 = data.frame(Pass_percentile = quantile(rams$Pass_percentile, c(.25)), rush_percentile= quantile(rams$rush_percentile, c(.25)), OppPass_Percentile=quantile(rams$OppPass_Percentile, c(.25)), OppRush_Percentile=quantile(rams$OppRush_Percentile, c(.25)), TO_percentile = quantile(rams$TO_percentile, c(.75)), OppTO_Percentile = quantile(rams$OppTO_Percentile, c(.75)))
+s3_1_predict<-predict(model_teamscore2, s3_1)
+percentile_scenarios[3,1]<-s3_1_predict
+#4 Bad, Bad
+s4_1 = data.frame(Pass_percentile = quantile(rams$Pass_percentile, c(.25)), rush_percentile= quantile(rams$rush_percentile, c(.25)), OppPass_Percentile=quantile(rams$OppPass_Percentile, c(.75)), OppRush_Percentile=quantile(rams$OppRush_Percentile, c(.75)), TO_percentile = quantile(rams$TO_percentile, c(.75)), OppTO_Percentile = quantile(rams$OppTO_Percentile, c(.25)))
+s4_1_predict<-predict(model_teamscore2, s4_1)
+percentile_scenarios[4,1]<-s4_1_predict
+detach(rams)
+```
+
+
+```{r PS2, include=TRUE, echo = FALSE}
+### Percentile model Patriots Scenarios
+#1 Good offensive day,  good defensive day
+attach(pats)
+p1_1 = data.frame(Pass_percentile = quantile(pats$Pass_percentile, c(.75)), rush_percentile= quantile(pats$rush_percentile, c(.75)), OppPass_Percentile=quantile(pats$OppPass_Percentile, c(.25)), OppRush_Percentile=quantile(pats$OppRush_Percentile, c(.25)), TO_percentile = quantile(pats$TO_percentile, c(.25)), OppTO_Percentile = quantile(pats$OppTO_Percentile, c(.75)))
+p1_1_predict<-predict(model_teamscore2, p1_1)
+percentile_scenarios[1,2]<- p1_1_predict
+#2 Good, bad
+p2_1= data.frame(Pass_percentile = quantile(pats$Pass_percentile, c(.75)), rush_percentile= quantile(pats$rush_percentile, c(.75)), OppPass_Percentile=quantile(pats$OppPass_Percentile, c(.75)), OppRush_Percentile=quantile(pats$OppRush_Percentile, c(.75)), TO_percentile = quantile(pats$TO_percentile, c(.25)), OppTO_Percentile = quantile(pats$OppTO_Percentile, c(.25)))
+p2_1_predict<-predict(model_teamscore2, p2_1)
+percentile_scenarios[2,2]<-p2_1_predict
+#3 Bad, good
+p3_1 = data.frame(Pass_percentile = quantile(pats$Pass_percentile, c(.25)), rush_percentile= quantile(pats$rush_percentile, c(.25)), OppPass_Percentile=quantile(pats$OppPass_Percentile, c(.25)), OppRush_Percentile=quantile(pats$OppRush_Percentile, c(.25)), TO_percentile = quantile(pats$TO_percentile, c(.75)), OppTO_Percentile = quantile(pats$OppTO_Percentile, c(.75)))
+p3_1_predict<-predict(model_teamscore2, p3_1)
+percentile_scenarios[3,2]<-p3_1_predict
+#4 Bad, Bad
+p4_1 = data.frame(Pass_percentile = quantile(pats$Pass_percentile, c(.25)), rush_percentile= quantile(pats$rush_percentile, c(.25)), OppPass_Percentile=quantile(pats$OppPass_Percentile, c(.75)), OppRush_Percentile=quantile(pats$OppRush_Percentile, c(.75)), TO_percentile = quantile(pats$TO_percentile, c(.75)), OppTO_Percentile = quantile(pats$OppTO_Percentile, c(.25)))
+p4_1_predict<-predict(model_teamscore2, p4_1)
+percentile_scenarios[4,2]<-p4_1_predict
+detach(pats)
+```
+
+## Score Conclusion
+```{r conclusion 1, results='asis', include=TRUE, echo = FALSE}
+#Finish the table
+scenarios[5,1]<-mean(scenarios$Rams.Scenarios, na.rm = TRUE)
+scenarios[5,2]<-mean(scenarios$Patriots.Scenarios, na.rm = TRUE)
+scenarios[6,1]<- xx
+#scenarios[6,2]<-" "
+rownames(scenarios)<- c("Offensive Yards: High\nDefensive Yards: low", "Offensive Yards: High\nDefensive Yards: High", "Offensive Yards: Low\nDefensive Yards: Low", "Offensive Yards: Low\nDefensive Yards: High", "Standard NFL Game Stats Model\nScenarios Average", "Model 1 RMSE")
+
+# kable(scenarios, digits = 2, col.names = c("Rams", "Patriots"), caption = "Game Day Scenarios 1")%>%
+#   kable_styling(bootstrap_options = c("striped", "hover"), full_width = T)%>%
+#   row_spec(0, bold = T)%>%
+#   row_spec(5, bold = T, color = "black")
+
+```
+
+```{r conclusion 2, results='asis', include=TRUE, echo = FALSE}
+percentile_scenarios[5,1]<- mean(percentile_scenarios$Rams.Scenarios, na.rm = TRUE)
+percentile_scenarios[5,2]<-mean(percentile_scenarios$Patriots.Scenarios, na.rm = TRUE)
+percentile_scenarios[6,1]<-yy
+#percentile_scenarios[6,2]<-
+rownames(percentile_scenarios)<- c("Offense Performance: High\nDefense Performance: High", "Offense Performance: High\nDefense Performance: Low", "Offense Performance: Low\nDefense Performance: High", "Offense Performance: Low\nDefense Performance: Low", "Performance Metric Model\nScenarios Average", "Model 2 RMSE")
+overall_scenarios<- rbind(scenarios, percentile_scenarios)
+overall_scenarios[13,1]<- mean(overall_scenarios[c(1:4,7:10),1], na.rm = TRUE)
+overall_scenarios[13,2]<- mean(overall_scenarios[c(1:4,7:10),2], na.rm= TRUE)
+overall_scenarios[14,1]<- mean(overall_scenarios[c(6,12),1], na.rm = TRUE)
+#overall_scenarios[14,2]<- " "
+rownames(overall_scenarios)[13]<- c("Overall Scenario Average")
+rownames(overall_scenarios)[14]<- c("Overall RMSE")
+kable(overall_scenarios, digits = 2, col.names = c("Rams", "Patriots"), caption = "Game Day Scenarios")%>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = T)%>%
+  group_rows("Group 1: Standard NFL Game Stats",1,6)%>%
+  group_rows("Group 2: Engineered Performance Metrics", 7, 11)%>%
+  row_spec(0, bold = T)%>%
+  row_spec(5, bold = T)%>%
+  row_spec(11, bold = T)%>%
+  row_spec(13, bold = T, font_size = 20, color = "black")
+
+```
+# Conclusion
+I used two different linear models, both employing similar statistics that are either directly related or calculated from basic NFL game starts like Passing Yards or Rush Yards. I used both a training and testing set for both models to produce predicted values. From there, I ran separate scenarios for potential game outcomes. There we four separate scenarios for both the Los Angeles Rams and the New England Patriots: 
+
+* Good offensive day and good defensive day
+* Good offensive day and bad defensive day
+* Bad offensive day and good defensive day
+* Bad offensive day and bad defensive day
+
+A "good" day was calculated by taking the 75% quantile value of either the Rams or Patriots 2018 season statistics for each given category. A "Bad" day was similiarly calcuated by taking the 25% quantile value for the 2018 season. Once the values were determined, each corresponding value was entered into the multiple regression equation and solved for a predicted score. Values of βi are the coefficients of the model and values of Xi are the values of the observation for each factor in the model. Y is the expected output of the model, i.e. the expected score for the given evidence.
+
+![](EQN.png)
+
+With two models, four scenarios for each team, the average of all eight predicted outcomes was taken and compared between teams. That is the prediction of final score, Patriots: `r round(overall_scenarios[13,2], digits = 2)` to Rams: `r round(overall_scenarios[13,1], digits = 2)` with a RSME of `r round(overall_scenarios[14,1], digits = 2)` points.
+
+***
+
+This method of calculating scores should be considered to be extremely conservative in nature. By taking the average values of relative "good" and "bad" game scenarios is not taking into account any extraordinary performances by either team. 
+
+***
+
+DISCLAIMER:
+This is a preliminary report and in no way should be relied on for monetary gain. Secondary analysis recommended.
